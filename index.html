@@ -1,0 +1,201 @@
+<!DOCTYPE html>
+<html lang="it" class="h-full bg-gray-100">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Test SWA Nativo -> APIM</title>
+    <!-- Caricamento Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        #log-output {
+            font-family: 'Courier New', Courier, monospace;
+            white-space: pre-wrap;
+            word-break: break-all;
+        }
+    </style>
+</head>
+<body class="h-full flex items-center justify-center font-sans text-gray-800">
+
+    <div class="w-full max-w-2xl bg-white shadow-2xl rounded-2xl p-8 m-4">
+        <h1 class="text-3xl font-bold text-center text-blue-700 mb-6">
+            Test SWA Nativo per APIM
+        </h1>
+        <p class="text-center text-gray-600 mb-6">
+            Questa pagina è stata caricata solo dopo l'autenticazione SWA.
+        </p>
+
+        <!-- 1. Dati Utente (dalla SWA) -->
+        <div class="border-b pb-6 mb-6">
+            <h2 class="text-xl font-semibold mb-4">1. Dati Utente (da /.auth/me)</h2>
+            <div id="user-info" class="p-3 rounded-lg bg-gray-100 font-mono text-sm">
+                Caricamento...
+            </div>
+        </div>
+
+        <!-- 2. Sezione Chiamata API -->
+        <div id="api-section">
+            <h2 class="text-xl font-semibold mb-4">2. Test Chiamata API</h2>
+            
+            <div class="flex flex-col sm:flex-row sm:items-end space-y-4 sm:space-y-0 sm:space-x-4">
+                <div class="flex-grow">
+                    <label for="file-path" class="block text-sm font-medium text-gray-600 mb-1">
+                        Percorso file (es. <span class="font-mono">mio-container/file.fgb</span>)
+                    </label>
+                    <input type="text" id="file-path" placeholder="container/nomefile.cog" class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">
+                </div>
+                <button id="call-api-button" class="px-6 py-2 bg-blue-600 text-white rounded-lg shadow-md hover:bg-blue-700 transition duration-300">
+                    Scarica File
+                </button>
+            </div>
+        </div>
+
+        <!-- 3. Sezione Log/Risultati -->
+        <div class="mt-6">
+            <h2 class="text-xl font-semibold mb-2">3. Risultati Chiamata</h2>
+            <div id="log-output" class="w-full h-48 bg-gray-900 text-green-400 text-sm rounded-lg p-4 overflow-y-auto">
+                In attesa di operazioni...
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // ========================================================================
+        // CONFIGURAZIONE OBBLIGATORIA
+        // ========================================================================
+
+        /**
+         * URL BASE APIM: L'endpoint della tua API in APIM
+         * (es. "https://mia-apim.azure-api.net/files" )
+         */
+        const APIM_BASE_URL = "https://LA_TUA_APIM_URL.azure-api.net/percorso-api";
+
+        /**
+         * ID CLIENT APIM: L'ID client (applicazione) dell'App Registration
+         * che protegge la tua API Management.
+         * (Serve per richiedere il token corretto)
+         */
+        const APIM_CLIENT_ID = "CLIENT_ID_DELLA_TUA_APIM_APP_REG_QUI";
+
+        // ========================================================================
+        // Fine Configurazione
+        // ========================================================================
+
+        // Riferimenti DOM
+        const logOutput = document.getElementById("log-output");
+        const callApiButton = document.getElementById("call-api-button");
+        const filePathInput = document.getElementById("file-path");
+        const userInfoDiv = document.getElementById("user-info");
+
+        let accessToken = null;
+
+        // Funzione per loggare messaggi
+        function logMessage(message, isError = false) {
+            console.log(message);
+            logOutput.innerHTML = (isError ? `<span class="text-red-400">[ERRORE]</span> ` : `<span class="text-green-400">[OK]</span> `) + 
+                                  message + "\n" + logOutput.innerHTML;
+        }
+
+        // Funzione per ottenere i dati utente e il token
+        async function getAuthData() {
+            try {
+                // La SWA espone un endpoint magico per i dati utente
+                const res = await fetch("/.auth/me");
+                const data = await res.json();
+                
+                if (data.clientPrincipal) {
+                    userInfoDiv.textContent = `User: ${data.clientPrincipal.userDetails}\nProvider: ${data.clientPrincipal.identityProvider}`;
+                    logMessage("Dati utente caricati da /.auth/me");
+                    
+                    // Ora chiediamo alla SWA di darci il token per APIM
+                    // (Usa l'ID Client di APIM per specificare l'audience)
+                    const tokenRes = await fetch(`/.auth/refresh?resource_id=${APIM_CLIENT_ID}`);
+                    if (!tokenRes.ok) {
+                        throw new Error("Impossibile rinfrescare il token per la risorsa APIM. Controlla le autorizzazioni API (Passaggio 3).");
+                    }
+                    const tokenData = await tokenRes.json();
+                    
+                    if (tokenData.access_token) {
+                        accessToken = tokenData.access_token;
+                        logMessage("Token di accesso per APIM acquisito con successo.");
+                    } else {
+                         throw new Error("La risposta /.auth/refresh non conteneva un access_token.");
+                    }
+
+                } else {
+                    userInfoDiv.textContent = "Errore: Dati utente non trovati. Assicurati che l'autenticazione SWA sia attiva.";
+                }
+            } catch (error) {
+                logMessage(`Errore critico durante il setup: ${error.message}`, true);
+                userInfoDiv.textContent = `Errore: ${error.message}`;
+            }
+        }
+
+        // Funzione per chiamare l'APIM e scaricare il file
+        async function fetchFileFromAPIM() {
+            const filePath = filePathInput.value;
+            if (!filePath) {
+                logMessage("Per favore, inserisci un percorso file.", true);
+                return;
+            }
+
+            if (!accessToken) {
+                logMessage("Token di accesso non disponibile. Tentativo di recupero...", true);
+                await getAuthData();
+                if(!accessToken) {
+                    logMessage("Recupero token fallito. Interruzione.", true);
+                    return;
+                }
+            }
+
+            logMessage(`Richiesta file: ${filePath}`);
+            logMessage("Token trovato. Chiamata a APIM in corso...");
+
+            try {
+                const response = await fetch(`${APIM_BASE_URL}/${filePath}`, {
+                    method: 'GET',
+                    headers: {
+                        'Authorization': `Bearer ${accessToken}`
+                        // Inserisci qui la tua Ocp-Apim-Subscription-Key se APIM la richiede
+                        // 'Ocp-Apim-Subscription-Key': 'LA_TUA_SUBSCRIPTION_KEY'
+                    }
+                });
+
+                if (!response.ok) {
+                    let errorBody = await response.text();
+                    try {
+                        const errorJson = JSON.parse(errorBody);
+                        errorBody = errorJson.message || JSON.stringify(errorJson);
+                    } catch (e) { /* Non era JSON */ }
+                    throw new Error(`Errore dal server: ${response.status} ${response.statusText}. Dettagli: ${errorBody}`);
+                }
+
+                logMessage(`Risposta ${response.status} OK. File ricevuto, ${response.headers.get('Content-Length')} bytes.`);
+                logMessage("Avvio del download...");
+
+                const blob = await response.blob();
+                const downloadUrl = window.URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.style.display = 'none';
+                a.href = downloadUrl;
+                a.download = filePath.split('/').pop() || 'download';
+                document.body.appendChild(a);
+                a.click();
+                window.URL.revokeObjectURL(downloadUrl);
+                a.remove();
+                
+                logMessage(`Download di '${a.download}' completato.`);
+
+            } catch (error) {
+                logMessage(`Errore durante il fetch del file: ${error.message}`, true);
+            }
+        }
+
+        // Assegna gli eventi ai pulsanti
+        callApiButton.addEventListener("click", fetchFileFromAPIM);
+
+        // Avvia il caricamento dei dati utente (e del token) non appena la pagina è pronta
+        document.addEventListener("DOMContentLoaded", getAuthData);
+
+    </script>
+</body>
+</html>
