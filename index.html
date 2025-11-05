@@ -1,296 +1,86 @@
 <!DOCTYPE html>
-<html lang="it" class="h-full bg-gray-100">
+<html lang="it">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Test Accesso APIM (Login Entra ID)</title>
-    <!-- Caricamento Tailwind CSS -->
-    <script src="https://cdn.tailwindcss.com"></script>
-    <style>
-        /* Stile personalizzato per i log */
-        #log-output {
-            font-family: 'Courier New', Courier, monospace;
-            white-space: pre-wrap;
-            word-break: break-all;
-        }
-    </style>
+  <meta charset="UTF-8" />
+  <title>Test Azure Entra ID + API Management</title>
+  <script src="https://alcdn.msauth.net/browser/2.37.0/js/msal-browser.min.js"></script>
 </head>
-<body class="h-full flex items-center justify-center font-sans text-gray-800">
+<body>
+  <h1>🔐 Test Autenticazione Entra ID + Chiamata API</h1>
 
-    <div class="w-full max-w-2xl bg-white shadow-2xl rounded-2xl p-8 m-4">
-        <h1 class="text-3xl font-bold text-center text-blue-700 mb-6">
-            Pagina Test APIM & Blob Storage
-        </h1>
+  <button id="login">Accedi</button>
+  <button id="callApi" disabled>Chiama API</button>
+  <pre id="output"></pre>
 
-        <!-- 1. Sezione Autenticazione -->
-        <div class="border-b pb-6 mb-6">
-            <h2 class="text-xl font-semibold mb-4">1. Autenticazione (Entra ID)</h2>
-            <div id="auth-status" class="mb-4 p-3 rounded-lg bg-gray-100 text-center">
-                Stato: <span class="font-semibold" id="status-text">Non connesso</span>
-            </div>
-            <div class="flex justify-center space-x-4">
-                <button id="login-button" class="px-6 py-2 bg-green-600 text-white rounded-lg shadow-md hover:bg-green-700 transition duration-300">
-                    Login
-                </button>
-                <button id="logout-button" class="hidden px-6 py-2 bg-red-600 text-white rounded-lg shadow-md hover:bg-red-700 transition duration-300">
-                    Logout
-                </button>
-            </div>
-        </div>
+  <script>
+    // === CONFIGURAZIONE MSAL ===
+    const msalConfig = {
+      auth: {
+        clientId: "INSERISCI_CLIENT_ID_APP",
+        authority: "https://login.microsoftonline.com/INSERISCI_TENANT_ID",
+        redirectUri: window.location.origin,
+      },
+      cache: {
+        cacheLocation: "sessionStorage",
+        storeAuthStateInCookie: false,
+      },
+    };
 
-        <!-- 2. Sezione Chiamata API (Nascosta finché non si è loggati) -->
-        <div id="api-section" class="hidden">
-            <h2 class="text-xl font-semibold mb-4">2. Test Chiamata API</h2>
-            <div class="flex flex-col sm:flex-row sm:items-end space-y-4 sm:space-y-0 sm:space-x-4">
-                <div class="flex-grow">
-                    <label for="file-path" class="block text-sm font-medium text-gray-600 mb-1">
-                        Percorso file (es. <span class="font-mono">mio-container/file.fgb</span>)
-                    </label>
-                    <input type="text" id="file-path" placeholder="container/nomefile.cog" class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">
-                </div>
-                <button id="call-api-button" class="px-6 py-2 bg-blue-600 text-white rounded-lg shadow-md hover:bg-blue-700 transition duration-300">
-                    Scarica File
-                </button>
-            </div>
-        </div>
+    const msalInstance = new msal.PublicClientApplication(msalConfig);
 
-        <!-- 3. Sezione Log/Risultati -->
-        <div class="mt-6">
-            <h2 class="text-xl font-semibold mb-2">3. Risultati</h2>
-            <div id="log-output" class="w-full h-48 bg-gray-900 text-green-400 text-sm rounded-lg p-4 overflow-y-auto">
-                In attesa di operazioni...
-            </div>
-        </div>
-    </div>
+    const loginRequest = {
+      scopes: ["api://INSERISCI_CLIENT_ID_API/.default"],
+    };
 
-    <!-- Libreria MSAL.js (Microsoft Authentication Library) -->
-    <script src="https://alcdn.msauth.net/browser/2.32.0/js/msal-browser.min.js"></script>
+    const apiEndpoint = "https://INSERISCI_TUO_APIM.azure-api.net/test/blob";
 
-    <script>
-        // ========================================================================
-        // CONFIGURAZIONE OBBLIGATORIA
-        // Inserisci qui i tuoi valori da Azure Active Directory (Entra ID)
-        // ========================================================================
+    async function signIn() {
+      try {
+        const loginResponse = await msalInstance.loginPopup(loginRequest);
+        document.getElementById("output").textContent = 
+          "Accesso riuscito come: " + loginResponse.account.username;
+        document.getElementById("callApi").disabled = false;
+      } catch (err) {
+        document.getElementById("output").textContent = "Errore login: " + err;
+      }
+    }
 
-        /**
-         * 1. ID CLIENT (Applicazione): ID della tua App Registration in AAD
-         * (Quella che rappresenta questa pagina web di test)
-         */
-        const AAD_CLIENT_ID = "IL_TUO_CLIENT_ID_QUI"; // es. "xxxx-xxxx-xxxx-xxxx"
+    async function callApi() {
+      try {
+        const account = msalInstance.getAllAccounts()[0];
+        const tokenResponse = await msalInstance.acquireTokenSilent({
+          ...loginRequest,
+          account: account,
+        });
 
-        /**
-         * 2. ID TENANT: ID del tuo tenant AAD
-         */
-        const AAD_TENANT_ID = "IL_TUO_TENANT_ID_QUI"; // es. "xxxx-xxxx-xxxx-xxxx"
+        const token = tokenResponse.accessToken;
 
-        /**
-         * 3. API SCOPE: Lo scope (autorizzazione) esposto dalla tua API Management in AAD
-         * (Si trova in AAD -> App Registrations -> [La tua APIM App] -> Expose an API)
-         */
-        const APIM_SCOPE = "api://IL_TUO_APIM_CLIENT_ID_QUI/.default"; // es. "api://xxxx-xxxx/.default"
+        const response = await fetch(apiEndpoint, {
+          method: "GET",
+          headers: {
+            "Authorization": "Bearer " + token,
+          },
+        });
 
-        /**
-         * 4. URL BASE APIM: L'endpoint della tua API in APIM
-         * (L'URL che hai configurato in APIM per l'accesso ai file,
-         * es. "https://mia-apim.azure-api.net/files" )
-         */
-        const APIM_BASE_URL = "https://LA_TUA_APIM_URL.azure-api.net/percorso-api";
+        const data = await response.text();
+        document.getElementById("output").textContent = data;
+      } catch (err) {
+        document.getElementById("output").textContent = "Errore API: " + err;
+      }
+    }
 
-        // ========================================================================
-        // Fine Configurazione
-        // ========================================================================
+    document.getElementById("login").addEventListener("click", signIn);
+    document.getElementById("callApi").addEventListener("click", callApi);
 
-        // Configurazione MSAL
-        const msalConfig = {
-            auth: {
-                clientId: AAD_CLIENT_ID,
-                authority: `https://login.microsoftonline.com/${AAD_TENANT_ID}`,
-                // Assicurati che l'URL dove ospiti questa pagina sia registrato
-                // come "Redirect URI" (tipo SPA) nella tua App Registration AAD
-                redirectUri: window.location.origin 
-            },
-            cache: {
-                cacheLocation: "sessionStorage", // "localStorage" per persistere tra sessioni
-                storeAuthStateInCookie: false,
-            }
-        };
-
-        const msalInstance = new msal.PublicClientApplication(msalConfig);
-        let currentAccount = null;
-
-        // Richiesta di login (scope base)
-        const loginRequest = {
-            scopes: ["User.Read"] // Scope minimo per il login
-        };
-
-        // Richiesta token per APIM (scope specifico)
-        const tokenRequest = {
-            scopes: [APIM_SCOPE],
-            account: null // Verrà impostato dopo il login
-        };
-
-        // Riferimenti DOM
-        const logOutput = document.getElementById("log-output");
-        const statusText = document.getElementById("status-text");
-        const loginButton = document.getElementById("login-button");
-        const logoutButton = document.getElementById("logout-button");
-        const apiSection = document.getElementById("api-section");
-        const callApiButton = document.getElementById("call-api-button");
-        const filePathInput = document.getElementById("file-path");
-
-        // Funzione per loggare messaggi
-        function logMessage(message, isError = false) {
-            console.log(message);
-            logOutput.innerHTML = (isError ? `<span class="text-red-400">[ERRORE]</span> ` : `<span class="text-green-400">[OK]</span> `) + 
-                                  message + "\n" + logOutput.innerHTML;
-        }
-
-        // Aggiorna l'interfaccia utente in base allo stato di autenticazione
-        function updateUI() {
-            currentAccount = msalInstance.getAllAccounts()[0] || null;
-
-            if (currentAccount) {
-                statusText.textContent = `Connesso come: ${currentAccount.username}`;
-                loginButton.classList.add("hidden");
-                logoutButton.classList.remove("hidden");
-                apiSection.classList.remove("hidden");
-                tokenRequest.account = currentAccount;
-            } else {
-                statusText.textContent = "Non connesso";
-                loginButton.classList.remove("hidden");
-                logoutButton.classList.add("hidden");
-                apiSection.classList.add("hidden");
-            }
-        }
-
-        // Funzione di Login
-        async function handleLogin() {
-            logMessage("Tentativo di login...");
-            try {
-                // Usiamo loginPopup per rimanere sulla stessa pagina
-                const loginResponse = await msalInstance.loginPopup(loginRequest);
-                logMessage(`Login completato per: ${loginResponse.account.username}`);
-                updateUI();
-            } catch (error) {
-                logMessage(`Errore durante il login: ${error}`, true);
-            }
-        }
-
-        // Funzione di Logout
-        async function handleLogout() {
-            logMessage("Tentativo di logout...");
-            try {
-                await msalInstance.logoutPopup({
-                    account: currentAccount
-                });
-                logMessage("Logout completato.");
-                updateUI();
-            } catch (error) {
-                logMessage(`Errore durante il logout: ${error}`, true);
-            }
-        }
-
-        // Funzione per acquisire il token (silenziosamente o con popup)
-        async function getToken() {
-            if (!currentAccount) {
-                logMessage("Non sei connesso.", true);
-                return null;
-            }
-
-            tokenRequest.account = currentAccount;
-
-            try {
-                // Prova ad acquisire il token silenziosamente
-                const response = await msalInstance.acquireTokenSilent(tokenRequest);
-                logMessage("Token acquisito silenziosamente.");
-                return response.accessToken;
-            } catch (error) {
-                // Se fallisce, prova con il popup (es. consenso richiesto)
-                if (error instanceof msal.InteractionRequiredAuthError) {
-                    logMessage("Acquisizione token silenziosa fallita. Apro popup...");
-                    try {
-                        const response = await msalInstance.acquireTokenPopup(tokenRequest);
-                        logMessage("Token acquisito tramite popup.");
-                        return response.accessToken;
-                    } catch (popupError) {
-                        logMessage(`Errore acquisizione token (popup): ${popupError}`, true);
-                        return null;
-                    }
-                } else {
-                    logMessage(`Errore acquisizione token: ${error}`, true);
-                    return null;
-                }
-            }
-        }
-
-        // Funzione per chiamare l'APIM e scaricare il file
-        async function fetchFileFromAPIM() {
-            const filePath = filePathInput.value;
-            if (!filePath) {
-                logMessage("Per favore, inserisci un percorso file.", true);
-                return;
-            }
-
-            logMessage(`Richiesta file: ${filePath}`);
-            logMessage("Acquisizione token di accesso...");
-
-            const token = await getToken();
-            if (!token) {
-                logMessage("Impossibile ottenere il token. Interruzione.", true);
-                return;
-            }
-
-            logMessage("Token ottenuto. Chiamata a APIM in corso...");
-
-            try {
-                const response = await fetch(`${APIM_BASE_URL}/${filePath}`, {
-                    method: 'GET',
-                    headers: {
-                        'Authorization': `Bearer ${token}`
-                        // Inserisci qui la tua Ocp-Apim-Subscription-Key se APIM la richiede
-                        // 'Ocp-Apim-Subscription-Key': 'LA_TUA_SUBSCRIPTION_KEY'
-                    }
-                });
-
-                if (!response.ok) {
-                    let errorBody = await response.text();
-                    try {
-                        const errorJson = JSON.parse(errorBody);
-                        errorBody = errorJson.message || JSON.stringify(errorJson);
-                    } catch (e) { /* Non era JSON */ }
-                    throw new Error(`Errore dal server: ${response.status} ${response.statusText}. Dettagli: ${errorBody}`);
-                }
-
-                logMessage(`Risposta ${response.status} OK. File ricevuto, ${response.headers.get('Content-Length')} bytes.`);
-                logMessage("Avvio del download...");
-
-                // Gestione del download del file
-                const blob = await response.blob();
-                const downloadUrl = window.URL.createObjectURL(blob);
-                const a = document.createElement('a');
-                a.style.display = 'none';
-                a.href = downloadUrl;
-                // Estrae il nome del file dall'input
-                a.download = filePath.split('/').pop() || 'download';
-                document.body.appendChild(a);
-                a.click();
-                window.URL.revokeObjectURL(downloadUrl);
-                a.remove();
-                
-                logMessage(`Download di '${a.download}' completato.`);
-
-            } catch (error) {
-                logMessage(`Errore durante il fetch del file: ${error.message}`, true);
-            }
-        }
-
-        // Assegna gli eventi ai pulsanti
-        loginButton.addEventListener("click", handleLogin);
-        logoutButton.addEventListener("click", handleLogout);
-        callApiButton.addEventListener("click", fetchFileFromAPIM);
-
-        // Controlla lo stato del login al caricamento della pagina
-        updateUI();
-    </script>
+    // Gestione redirect dopo login
+    msalInstance.handleRedirectPromise().then((response) => {
+      if (response) {
+        msalInstance.setActiveAccount(response.account);
+        document.getElementById("output").textContent =
+          "Accesso riuscito come: " + response.account.username;
+        document.getElementById("callApi").disabled = false;
+      }
+    });
+  </script>
 </body>
 </html>
