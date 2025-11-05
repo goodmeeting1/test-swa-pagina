@@ -3,10 +3,11 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Test SWA Nativo -> APIM</title>
+    <title>Test Accesso APIM (Login Entra ID)</title>
     <!-- Caricamento Tailwind CSS -->
     <script src="https://cdn.tailwindcss.com"></script>
     <style>
+        /* Stile personalizzato per i log */
         #log-output {
             font-family: 'Courier New', Courier, monospace;
             white-space: pre-wrap;
@@ -18,24 +19,28 @@
 
     <div class="w-full max-w-2xl bg-white shadow-2xl rounded-2xl p-8 m-4">
         <h1 class="text-3xl font-bold text-center text-blue-700 mb-6">
-            Test SWA Nativo per APIM
+            Pagina Test APIM & Blob Storage
         </h1>
-        <p class="text-center text-gray-600 mb-6">
-            Questa pagina è stata caricata solo dopo l'autenticazione SWA.
-        </p>
 
-        <!-- 1. Dati Utente (dalla SWA) -->
+        <!-- 1. Sezione Autenticazione -->
         <div class="border-b pb-6 mb-6">
-            <h2 class="text-xl font-semibold mb-4">1. Dati Utente (da /.auth/me)</h2>
-            <div id="user-info" class="p-3 rounded-lg bg-gray-100 font-mono text-sm">
-                Caricamento...
+            <h2 class="text-xl font-semibold mb-4">1. Autenticazione (Entra ID)</h2>
+            <div id="auth-status" class="mb-4 p-3 rounded-lg bg-gray-100 text-center">
+                Stato: <span class="font-semibold" id="status-text">Non connesso</span>
+            </div>
+            <div class="flex justify-center space-x-4">
+                <button id="login-button" class="px-6 py-2 bg-green-600 text-white rounded-lg shadow-md hover:bg-green-700 transition duration-300">
+                    Login
+                </button>
+                <button id="logout-button" class="hidden px-6 py-2 bg-red-600 text-white rounded-lg shadow-md hover:bg-red-700 transition duration-300">
+                    Logout
+                </button>
             </div>
         </div>
 
-        <!-- 2. Sezione Chiamata API -->
-        <div id="api-section">
+        <!-- 2. Sezione Chiamata API (Nascosta finché non si è loggati) -->
+        <div id="api-section" class="hidden">
             <h2 class="text-xl font-semibold mb-4">2. Test Chiamata API</h2>
-            
             <div class="flex flex-col sm:flex-row sm:items-end space-y-4 sm:space-y-0 sm:space-x-4">
                 <div class="flex-grow">
                     <label for="file-path" class="block text-sm font-medium text-gray-600 mb-1">
@@ -51,42 +56,87 @@
 
         <!-- 3. Sezione Log/Risultati -->
         <div class="mt-6">
-            <h2 class="text-xl font-semibold mb-2">3. Risultati Chiamata</h2>
+            <h2 class="text-xl font-semibold mb-2">3. Risultati</h2>
             <div id="log-output" class="w-full h-48 bg-gray-900 text-green-400 text-sm rounded-lg p-4 overflow-y-auto">
                 In attesa di operazioni...
             </div>
         </div>
     </div>
 
+    <!-- Libreria MSAL.js (Microsoft Authentication Library) -->
+    <script src="https://alcdn.msauth.net/browser/2.32.0/js/msal-browser.min.js"></script>
+
     <script>
         // ========================================================================
         // CONFIGURAZIONE OBBLIGATORIA
+        // Inserisci qui i tuoi valori da Azure Active Directory (Entra ID)
         // ========================================================================
 
         /**
-         * URL BASE APIM: L'endpoint della tua API in APIM
-         * (es. "https://mia-apim.azure-api.net/files" )
+         * 1. ID CLIENT (Applicazione): ID della tua App Registration in AAD
+         * (Quella che rappresenta questa pagina web di test)
          */
-        const APIM_BASE_URL = "https://LA_TUA_APIM_URL.azure-api.net/percorso-api";
+        const AAD_CLIENT_ID = "IL_TUO_CLIENT_ID_QUI"; // es. "xxxx-xxxx-xxxx-xxxx"
 
         /**
-         * ID CLIENT APIM: L'ID client (applicazione) dell'App Registration
-         * che protegge la tua API Management.
-         * (Serve per richiedere il token corretto)
+         * 2. ID TENANT: ID del tuo tenant AAD
          */
-        const APIM_CLIENT_ID = "CLIENT_ID_DELLA_TUA_APIM_APP_REG_QUI";
+        const AAD_TENANT_ID = "IL_TUO_TENANT_ID_QUI"; // es. "xxxx-xxxx-xxxx-xxxx"
+
+        /**
+         * 3. API SCOPE: Lo scope (autorizzazione) esposto dalla tua API Management in AAD
+         * (Si trova in AAD -> App Registrations -> [La tua APIM App] -> Expose an API)
+         */
+        const APIM_SCOPE = "api://IL_TUO_APIM_CLIENT_ID_QUI/.default"; // es. "api://xxxx-xxxx/.default"
+
+        /**
+         * 4. URL BASE APIM: L'endpoint della tua API in APIM
+         * (L'URL che hai configurato in APIM per l'accesso ai file,
+         * es. "https://mia-apim.azure-api.net/files" )
+         */
+        const APIM_BASE_URL = "https://LA_TUA_APIM_URL.azure-api.net/percorso-api";
 
         // ========================================================================
         // Fine Configurazione
         // ========================================================================
 
+        // Configurazione MSAL
+        const msalConfig = {
+            auth: {
+                clientId: AAD_CLIENT_ID,
+                authority: `https://login.microsoftonline.com/${AAD_TENANT_ID}`,
+                // Assicurati che l'URL dove ospiti questa pagina sia registrato
+                // come "Redirect URI" (tipo SPA) nella tua App Registration AAD
+                redirectUri: window.location.origin 
+            },
+            cache: {
+                cacheLocation: "sessionStorage", // "localStorage" per persistere tra sessioni
+                storeAuthStateInCookie: false,
+            }
+        };
+
+        const msalInstance = new msal.PublicClientApplication(msalConfig);
+        let currentAccount = null;
+
+        // Richiesta di login (scope base)
+        const loginRequest = {
+            scopes: ["User.Read"] // Scope minimo per il login
+        };
+
+        // Richiesta token per APIM (scope specifico)
+        const tokenRequest = {
+            scopes: [APIM_SCOPE],
+            account: null // Verrà impostato dopo il login
+        };
+
         // Riferimenti DOM
         const logOutput = document.getElementById("log-output");
+        const statusText = document.getElementById("status-text");
+        const loginButton = document.getElementById("login-button");
+        const logoutButton = document.getElementById("logout-button");
+        const apiSection = document.getElementById("api-section");
         const callApiButton = document.getElementById("call-api-button");
         const filePathInput = document.getElementById("file-path");
-        const userInfoDiv = document.getElementById("user-info");
-
-        let accessToken = null;
 
         // Funzione per loggare messaggi
         function logMessage(message, isError = false) {
@@ -95,38 +145,81 @@
                                   message + "\n" + logOutput.innerHTML;
         }
 
-        // Funzione per ottenere i dati utente e il token
-        async function getAuthData() {
-            try {
-                // La SWA espone un endpoint magico per i dati utente
-                const res = await fetch("/.auth/me");
-                const data = await res.json();
-                
-                if (data.clientPrincipal) {
-                    userInfoDiv.textContent = `User: ${data.clientPrincipal.userDetails}\nProvider: ${data.clientPrincipal.identityProvider}`;
-                    logMessage("Dati utente caricati da /.auth/me");
-                    
-                    // Ora chiediamo alla SWA di darci il token per APIM
-                    // (Usa l'ID Client di APIM per specificare l'audience)
-                    const tokenRes = await fetch(`/.auth/refresh?resource_id=${APIM_CLIENT_ID}`);
-                    if (!tokenRes.ok) {
-                        throw new Error("Impossibile rinfrescare il token per la risorsa APIM. Controlla le autorizzazioni API (Passaggio 3).");
-                    }
-                    const tokenData = await tokenRes.json();
-                    
-                    if (tokenData.access_token) {
-                        accessToken = tokenData.access_token;
-                        logMessage("Token di accesso per APIM acquisito con successo.");
-                    } else {
-                         throw new Error("La risposta /.auth/refresh non conteneva un access_token.");
-                    }
+        // Aggiorna l'interfaccia utente in base allo stato di autenticazione
+        function updateUI() {
+            currentAccount = msalInstance.getAllAccounts()[0] || null;
 
-                } else {
-                    userInfoDiv.textContent = "Errore: Dati utente non trovati. Assicurati che l'autenticazione SWA sia attiva.";
-                }
+            if (currentAccount) {
+                statusText.textContent = `Connesso come: ${currentAccount.username}`;
+                loginButton.classList.add("hidden");
+                logoutButton.classList.remove("hidden");
+                apiSection.classList.remove("hidden");
+                tokenRequest.account = currentAccount;
+            } else {
+                statusText.textContent = "Non connesso";
+                loginButton.classList.remove("hidden");
+                logoutButton.classList.add("hidden");
+                apiSection.classList.add("hidden");
+            }
+        }
+
+        // Funzione di Login
+        async function handleLogin() {
+            logMessage("Tentativo di login...");
+            try {
+                // Usiamo loginPopup per rimanere sulla stessa pagina
+                const loginResponse = await msalInstance.loginPopup(loginRequest);
+                logMessage(`Login completato per: ${loginResponse.account.username}`);
+                updateUI();
             } catch (error) {
-                logMessage(`Errore critico durante il setup: ${error.message}`, true);
-                userInfoDiv.textContent = `Errore: ${error.message}`;
+                logMessage(`Errore durante il login: ${error}`, true);
+            }
+        }
+
+        // Funzione di Logout
+        async function handleLogout() {
+            logMessage("Tentativo di logout...");
+            try {
+                await msalInstance.logoutPopup({
+                    account: currentAccount
+                });
+                logMessage("Logout completato.");
+                updateUI();
+            } catch (error) {
+                logMessage(`Errore durante il logout: ${error}`, true);
+            }
+        }
+
+        // Funzione per acquisire il token (silenziosamente o con popup)
+        async function getToken() {
+            if (!currentAccount) {
+                logMessage("Non sei connesso.", true);
+                return null;
+            }
+
+            tokenRequest.account = currentAccount;
+
+            try {
+                // Prova ad acquisire il token silenziosamente
+                const response = await msalInstance.acquireTokenSilent(tokenRequest);
+                logMessage("Token acquisito silenziosamente.");
+                return response.accessToken;
+            } catch (error) {
+                // Se fallisce, prova con il popup (es. consenso richiesto)
+                if (error instanceof msal.InteractionRequiredAuthError) {
+                    logMessage("Acquisizione token silenziosa fallita. Apro popup...");
+                    try {
+                        const response = await msalInstance.acquireTokenPopup(tokenRequest);
+                        logMessage("Token acquisito tramite popup.");
+                        return response.accessToken;
+                    } catch (popupError) {
+                        logMessage(`Errore acquisizione token (popup): ${popupError}`, true);
+                        return null;
+                    }
+                } else {
+                    logMessage(`Errore acquisizione token: ${error}`, true);
+                    return null;
+                }
             }
         }
 
@@ -138,23 +231,22 @@
                 return;
             }
 
-            if (!accessToken) {
-                logMessage("Token di accesso non disponibile. Tentativo di recupero...", true);
-                await getAuthData();
-                if(!accessToken) {
-                    logMessage("Recupero token fallito. Interruzione.", true);
-                    return;
-                }
+            logMessage(`Richiesta file: ${filePath}`);
+            logMessage("Acquisizione token di accesso...");
+
+            const token = await getToken();
+            if (!token) {
+                logMessage("Impossibile ottenere il token. Interruzione.", true);
+                return;
             }
 
-            logMessage(`Richiesta file: ${filePath}`);
-            logMessage("Token trovato. Chiamata a APIM in corso...");
+            logMessage("Token ottenuto. Chiamata a APIM in corso...");
 
             try {
                 const response = await fetch(`${APIM_BASE_URL}/${filePath}`, {
                     method: 'GET',
                     headers: {
-                        'Authorization': `Bearer ${accessToken}`
+                        'Authorization': `Bearer ${token}`
                         // Inserisci qui la tua Ocp-Apim-Subscription-Key se APIM la richiede
                         // 'Ocp-Apim-Subscription-Key': 'LA_TUA_SUBSCRIPTION_KEY'
                     }
@@ -172,11 +264,13 @@
                 logMessage(`Risposta ${response.status} OK. File ricevuto, ${response.headers.get('Content-Length')} bytes.`);
                 logMessage("Avvio del download...");
 
+                // Gestione del download del file
                 const blob = await response.blob();
                 const downloadUrl = window.URL.createObjectURL(blob);
                 const a = document.createElement('a');
                 a.style.display = 'none';
                 a.href = downloadUrl;
+                // Estrae il nome del file dall'input
                 a.download = filePath.split('/').pop() || 'download';
                 document.body.appendChild(a);
                 a.click();
@@ -191,11 +285,12 @@
         }
 
         // Assegna gli eventi ai pulsanti
+        loginButton.addEventListener("click", handleLogin);
+        logoutButton.addEventListener("click", handleLogout);
         callApiButton.addEventListener("click", fetchFileFromAPIM);
 
-        // Avvia il caricamento dei dati utente (e del token) non appena la pagina è pronta
-        document.addEventListener("DOMContentLoaded", getAuthData);
-
+        // Controlla lo stato del login al caricamento della pagina
+        updateUI();
     </script>
 </body>
 </html>
