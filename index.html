@@ -1,86 +1,17 @@
 <!DOCTYPE html>
 <html lang="it">
 <head>
-  <meta charset="UTF-8" />
-  <title>Test Azure Entra ID + API Management</title>
-  <script src="https://alcdn.msauth.net/browser/2.37.0/js/msal-browser.min.js"></script>
+    <meta charset="UTF-8">
+    <title>Demo SWA + Entra ID</title>
 </head>
 <body>
-  <h1>🔐 Test Autenticazione Entra ID + Chiamata API</h1>
 
-  <button id="login">Accedi</button>
-  <button id="callApi" disabled>Chiama API</button>
-  <pre id="output"></pre>
+    <h1>Demo Login (Azure Static Web App)</h1>
+    <button id="loginButton">Login con Entra ID</button>
+    <pre id="statusArea" style="background-color: #f4f4f4; padding: 10px; word-wrap: break-word;"></pre>
 
-  <script>
-    // === CONFIGURAZIONE MSAL ===
-    const msalConfig = {
-      auth: {
-        clientId: "INSERISCI_CLIENT_ID_APP",
-        authority: "https://login.microsoftonline.com/INSERISCI_TENANT_ID",
-        redirectUri: window.location.origin,
-      },
-      cache: {
-        cacheLocation: "sessionStorage",
-        storeAuthStateInCookie: false,
-      },
-    };
+    <script src="https://alcdn.msauth.net/browser/v2.30.0/js/msal-browser.min.js"></script>
+    <script src="app.js"></script>
 
-    const msalInstance = new msal.PublicClientApplication(msalConfig);
-
-    const loginRequest = {
-      scopes: ["api://INSERISCI_CLIENT_ID_API/.default"],
-    };
-
-    const apiEndpoint = "https://INSERISCI_TUO_APIM.azure-api.net/test/blob";
-
-    async function signIn() {
-      try {
-        const loginResponse = await msalInstance.loginPopup(loginRequest);
-        document.getElementById("output").textContent = 
-          "Accesso riuscito come: " + loginResponse.account.username;
-        document.getElementById("callApi").disabled = false;
-      } catch (err) {
-        document.getElementById("output").textContent = "Errore login: " + err;
-      }
-    }
-
-    async function callApi() {
-      try {
-        const account = msalInstance.getAllAccounts()[0];
-        const tokenResponse = await msalInstance.acquireTokenSilent({
-          ...loginRequest,
-          account: account,
-        });
-
-        const token = tokenResponse.accessToken;
-
-        const response = await fetch(apiEndpoint, {
-          method: "GET",
-          headers: {
-            "Authorization": "Bearer " + token,
-          },
-        });
-
-        const data = await response.text();
-        document.getElementById("output").textContent = data;
-      } catch (err) {
-        document.getElementById("output").textContent = "Errore API: " + err;
-      }
-    }
-
-    document.getElementById("login").addEventListener("click", signIn);
-    document.getElementById("callApi").addEventListener("click", callApi);
-
-    // Gestione redirect dopo login
-    msalInstance.handleRedirectPromise().then((response) => {
-      if (response) {
-        msalInstance.setActiveAccount(response.account);
-        document.getElementById("output").textContent =
-          "Accesso riuscito come: " + response.account.username;
-        document.getElementById("callApi").disabled = false;
-      }
-    });
-  </script>
 </body>
 </html>
